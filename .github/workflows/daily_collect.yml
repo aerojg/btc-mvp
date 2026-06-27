@@ -1,0 +1,43 @@
+name: Daily BTC On-chain Data Collection
+
+on:
+  schedule:
+    - cron: '0 0 * * *'   # 매일 UTC 00:00 (한국시간 오전 9시) 자동 실행
+  workflow_dispatch:        # Actions 탭에서 수동 실행 가능
+
+permissions:
+  contents: write           # DB 파일을 커밋/푸시하기 위해 필요
+
+jobs:
+  collect-and-calculate:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run data collector
+        env:
+          COINGECKO_API_KEY: ${{ secrets.COINGECKO_API_KEY }}
+        run: python collector.py
+
+      - name: Calculate metrics
+        run: python calculate_metrics.py
+
+      - name: Commit and push updated database
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add btc_onchain.db
+          git diff --staged --quiet || git commit -m "Daily data update: $(date -u +'%Y-%m-%d %H:%M UTC')"
+          git push
