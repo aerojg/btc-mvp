@@ -226,14 +226,33 @@ def _hash_rate_trend(pct: Optional[float]):
 
 
 # ---------------------------------------------------------------------------
-# 상단 핵심 지표 설명 카드 3개
+# 상단 핵심 지표 설명 카드 4개 (현재가 기준 시점 + MVRV + MVRV Z + 종합 스코어)
 # ---------------------------------------------------------------------------
-def render_top_metric_explainers(result) -> None:
+def render_top_metric_explainers(result, last_collected_date=None) -> None:
     mvrv_label, mvrv_color, mvrv_text = _mvrv_level(result.mvrv)
     z_label, z_color, z_text = _mvrv_z_level(result.mvrv_z)
     score_label, score_color, score_text = _score_level(result.score_0_100)
 
-    c1, c2, c3 = st.columns(3)
+    if last_collected_date is not None:
+        kst_str = last_collected_date.strftime("%Y년 %m월 %d일") + " 오전 9시"
+    else:
+        kst_str = "알 수 없음"
+
+    c0, c1, c2, c3 = st.columns(4)
+    with c0:
+        st.markdown(
+            _render_card(
+                "🕒", "현재가 기준 시점", kst_str,
+                "일 1회 스냅샷", "gray",
+                "이 대시보드의 '현재가'는 실시간 거래소 시세가 아니라, GitHub Actions가 "
+                "매일 자동으로 데이터를 수집하는 시점(UTC 00:00, 한국시간 오전 9시)에 기록된 "
+                "값입니다. 비트코인 가격은 1초 단위로 바뀌지만, 함께 표시되는 MVRV 등 온체인 "
+                "지표와 동일한 기준 시점으로 비교하기 위해 가격도 하루 한 번만 갱신됩니다.",
+                "다음 자동 갱신은 내일 같은 시각(오전 9시)에 이루어집니다.",
+                value_caption="가장 최근 수집",
+            ),
+            unsafe_allow_html=True,
+        )
     with c1:
         st.markdown(
             _render_card(
@@ -325,7 +344,7 @@ def main():
         )
 
     st.markdown("#### 📖 지표 풀이")
-    render_top_metric_explainers(result)
+    render_top_metric_explainers(result, df["date"].max())
 
     st.divider()
 
