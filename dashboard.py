@@ -237,29 +237,38 @@ def _hash_rate_trend(pct: Optional[float]):
 # ---------------------------------------------------------------------------
 # 상단 핵심 지표 설명 카드 4개 (현재가 기준 시점 + MVRV + MVRV Z + 종합 스코어)
 # ---------------------------------------------------------------------------
-def render_top_metric_explainers(result, last_collected_date=None) -> None:
+def render_top_metric_explainers(result, last_data_date=None, last_collected_at=None) -> None:
     mvrv_label, mvrv_color, mvrv_text = _mvrv_level(result.mvrv)
     z_label, z_color, z_text = _mvrv_z_level(result.mvrv_z)
     score_label, score_color, score_text = _score_level(result.score_0_100)
 
-    if last_collected_date is not None:
-        kst_str = last_collected_date.strftime("%Y년 %m월 %d일") + " 오전 9시"
-    else:
-        kst_str = "알 수 없음"
+    data_date_str = last_data_date.strftime("%Y년 %m월 %d일") if last_data_date is not None else "알 수 없음"
+
+    collected_str = "알 수 없음"
+    if last_collected_at:
+        try:
+            collected_str = (
+                datetime.fromisoformat(last_collected_at).astimezone(KST).strftime("%Y-%m-%d %H:%M")
+                + " KST"
+            )
+        except ValueError:
+            pass
 
     c0, c1, c2, c3 = st.columns(4)
     with c0:
         st.markdown(
             _render_card(
-                "🕒", "가격 갱신 안내", kst_str,
+                "🕒", "가격 갱신 안내", data_date_str,
                 "온체인 지표는 일 1회", "gray",
                 "상단의 '현재가(실시간)'는 페이지를 열 때마다 CoinGecko에서 즉시 조회한 값으로, "
                 "실제 거래소 시세와 거의 동일합니다(최대 30초 지연). 반면 MVRV·활성주소수·해시레이트 "
                 "등 온체인 지표는 CoinMetrics가 하루 단위로만 제공하는 데이터라, GitHub Actions가 "
-                "매일 자동 수집하는 시점(UTC 00:00, 한국시간 오전 9시)의 값이 다음 수집 전까지 유지됩니다.",
-                f"온체인 지표의 다음 자동 갱신은 내일 같은 시각(오전 9시)에 이루어집니다. "
-                f"({kst_str} 기준)",
-                value_caption="온체인 지표 최근 수집",
+                "매일 자동 수집하는 값이 다음 수집 전까지 유지됩니다. 표시된 날짜는 온체인 데이터가 "
+                "다루는 기준일이며, 통상 전날까지의 마감 데이터입니다.",
+                f"이 온체인 데이터는 {collected_str}에 자동 수집이 완료되어 반영된 값입니다. "
+                "GitHub Actions는 매일 UTC 00:00(한국시간 오전 9시)에 실행되도록 예약되어 있으나, "
+                "실행 대기열 상황에 따라 실제 완료 시각은 다소 늦어질 수 있습니다.",
+                value_caption="온체인 데이터 기준일",
             ),
             unsafe_allow_html=True,
         )
@@ -363,7 +372,8 @@ def main():
         )
 
     st.markdown("#### 📖 지표 풀이")
-    render_top_metric_explainers(result, df["date"].max())
+    last_row = df.iloc[-1]
+    render_top_metric_explainers(result, last_row["date"], last_row["collected_at"])
 
     st.divider()
 
