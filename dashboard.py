@@ -9,13 +9,16 @@ SQLite DB(btc_onchain.db)를 읽어 시각화하는 Streamlit 대시보드.
 """
 
 import sqlite3
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import pandas as pd
 import streamlit as st
 
-from collector import DB_PATH
+from collector import DB_PATH, fetch_coingecko_latest
 from calculate_metrics import calculate_all, save_result
+
+KST = timezone(timedelta(hours=9))
 
 st.set_page_config(page_title="비트코인 적정가치 분석 (MVP)", layout="wide")
 
@@ -87,6 +90,12 @@ def load_data(db_path: str = DB_PATH) -> pd.DataFrame:
     )
     conn.close()
     return df
+
+
+@st.cache_data(ttl=30)
+def load_live_price() -> dict:
+    """CoinGecko에서 실시간 가격을 가져온다. 30초 캐시로 API 과호출을 방지."""
+    return fetch_coingecko_latest()
 
 
 # ---------------------------------------------------------------------------
@@ -242,14 +251,15 @@ def render_top_metric_explainers(result, last_collected_date=None) -> None:
     with c0:
         st.markdown(
             _render_card(
-                "🕒", "현재가 기준 시점", kst_str,
-                "일 1회 스냅샷", "gray",
-                "이 대시보드의 '현재가'는 실시간 거래소 시세가 아니라, GitHub Actions가 "
-                "매일 자동으로 데이터를 수집하는 시점(UTC 00:00, 한국시간 오전 9시)에 기록된 "
-                "값입니다. 비트코인 가격은 1초 단위로 바뀌지만, 함께 표시되는 MVRV 등 온체인 "
-                "지표와 동일한 기준 시점으로 비교하기 위해 가격도 하루 한 번만 갱신됩니다.",
-                "다음 자동 갱신은 내일 같은 시각(오전 9시)에 이루어집니다.",
-                value_caption="가장 최근 수집",
+                "🕒", "가격 갱신 안내", kst_str,
+                "온체인 지표는 일 1회", "gray",
+                "상단의 '현재가(실시간)'는 페이지를 열 때마다 CoinGecko에서 즉시 조회한 값으로, "
+                "실제 거래소 시세와 거의 동일합니다(최대 30초 지연). 반면 MVRV·활성주소수·해시레이트 "
+                "등 온체인 지표는 CoinMetrics가 하루 단위로만 제공하는 데이터라, GitHub Actions가 "
+                "매일 자동 수집하는 시점(UTC 00:00, 한국시간 오전 9시)의 값이 다음 수집 전까지 유지됩니다.",
+                f"온체인 지표의 다음 자동 갱신은 내일 같은 시각(오전 9시)에 이루어집니다. "
+                f"({kst_str} 기준)",
+                value_caption="온체인 지표 최근 수집",
             ),
             unsafe_allow_html=True,
         )
@@ -330,8 +340,17 @@ def main():
         st.error(f"지표 계산 중 오류: {e}")
         return
 
+    live = load_live_price()
+    live_price = live.get("cg_price_usd")
+    now_kst_str = datetime.now(KST).strftime("%Y-%m-%d %H:%M:%S")
+
     col1, col2, col3, col4 = st.columns(4)
-    col1.metric("현재가 (USD)", f"${result.price_usd:,.0f}" if result.price_usd else "N/A")
+    if live_price:
+        col1.metric("현재가 (실시간, USD)", f"${live_price:,.0f}")
+        col1.caption(f"⏱ {now_kst_str} KST 기준 · CoinGecko")
+    else:
+        col1.metric("현재가 (USD)", f"${result.price_usd:,.0f}" if result.price_usd else "N/A")
+        col1.caption("⚠️ 실시간 조회 실패 — 최근 수집된 값으로 표시")
     col2.metric("MVRV (CoinMetrics 제공)", result.mvrv if result.mvrv is not None else "N/A")
     col3.metric("MVRV Z(자체 정규화)", result.mvrv_z if result.mvrv_z is not None else "N/A")
     col4.metric("종합 밸류에이션 스코어", f"{result.score_0_100}/100" if result.score_0_100 else "N/A")
