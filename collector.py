@@ -25,6 +25,7 @@ import time
 from datetime import datetime, timezone
 
 import requests
+from psychology_collector import fetch_fear_greed_index
 
 # ---------------------------------------------------------------------------
 # 설정
@@ -134,8 +135,16 @@ def fetch_coingecko_latest() -> dict:
 # ---------------------------------------------------------------------------
 # 저장
 # ---------------------------------------------------------------------------
-def upsert_rows(rows: list[dict], cg: dict, db_path: str = DB_PATH) -> int:
-    """CoinMetrics 일별 row들을 DB에 upsert. 가장 최신 날짜에는 CoinGecko 값도 함께 기록."""
+# =====================================================
+# DB에 데이터 저장 (UPSERT)
+# =====================================================
+
+# =====================================================
+# DB에 데이터 저장 (UPSERT)
+# =====================================================
+
+def upsert_rows(rows: list[dict], cg: dict, fng: dict, db_path: str) -> int:
+    """CoinMetrics 일별 rows를 DB에 upsert. 기장 최신 버전"""
     conn = sqlite3.connect(db_path)
     cur = conn.cursor()
     now_iso = datetime.now(timezone.utc).isoformat()
@@ -145,7 +154,7 @@ def upsert_rows(rows: list[dict], cg: dict, db_path: str = DB_PATH) -> int:
     latest_date = rows_sorted[0]["time"][:10] if rows_sorted else None
 
     for r in rows_sorted:
-        date = r["time"][:10]  # "2026-06-26T00:00:00.000000000Z" -> "2026-06-26"
+        date = r["time"][:10]  # 2026-06-26T00:00:00
 
         def f(key):
             v = r.get(key)
@@ -153,26 +162,33 @@ def upsert_rows(rows: list[dict], cg: dict, db_path: str = DB_PATH) -> int:
 
         cg_vals = cg if date == latest_date else {}
 
+        # FNG 데이터 (매일 1개씩만 업데이트)
+        fng_value = None
+        if fng and fng.get('value') is not None:
+            fng_value = fng['value']
+
         cur.execute(
             """
             INSERT INTO daily_metrics (
                 date, price_usd, cap_mrkt_usd, mvrv_cm, active_addr,
                 hash_rate, tx_count, supply_current, issuance_usd,
-                cg_price_usd, cg_market_cap, cg_volume_24h, collected_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                cg_price_usd, cg_market_cap, cg_volume_24h,
+                collected_at, fear_greed_index
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(date) DO UPDATE SET
-                price_usd=excluded.price_usd,
-                cap_mrkt_usd=excluded.cap_mrkt_usd,
-                mvrv_cm=excluded.mvrv_cm,
-                active_addr=excluded.active_addr,
-                hash_rate=excluded.hash_rate,
-                tx_count=excluded.tx_count,
-                supply_current=excluded.supply_current,
-                issuance_usd=excluded.issuance_usd,
-                cg_price_usd=COALESCE(excluded.cg_price_usd, daily_metrics.cg_price_usd),
-                cg_market_cap=COALESCE(excluded.cg_market_cap, daily_metrics.cg_market_cap),
-                cg_volume_24h=COALESCE(excluded.cg_volume_24h, daily_metrics.cg_volume_24h),
-                collected_at=excluded.collected_at
+                price_usd = excluded.price_usd,
+                cap_mrkt_usd = excluded.cap_mrkt_usd,
+                mvrv_cm = excluded.mvrv_cm,
+                active_addr = excluded.active_addr,
+                hash_rate = excluded.hash_rate,
+                tx_count = excluded.tx_count,
+                supply_current = excluded.supply_current,
+                issuance_usd = excluded.issuance_usd,
+                cg_price_usd = COALESCE(excluded.cg_price_usd, cg_price_usd),
+                cg_market_cap = COALESCE(excluded.cg_market_cap, cg_market_cap),
+                cg_volume_24h = COALESCE(excluded.cg_volume_24h, cg_volume_24h),
+                collected_at = excluded.collected_at,
+                fear_greed_index = COALESCE(excluded.fear_greed_index, fear_greed_index)
             """,
             (
                 date,
@@ -183,11 +199,12 @@ def upsert_rows(rows: list[dict], cg: dict, db_path: str = DB_PATH) -> int:
                 f("HashRate"),
                 f("TxCnt"),
                 f("SplyCur"),
-                f("IssTotUSD"),
+                f("IssToUSD"),
                 cg_vals.get("cg_price_usd"),
                 cg_vals.get("cg_market_cap"),
                 cg_vals.get("cg_volume_24h"),
                 now_iso,
+                fng_value
             ),
         )
         inserted += 1
@@ -209,9 +226,10 @@ def run(db_path: str = DB_PATH) -> None:
         raise RuntimeError("CoinMetrics에서 데이터를 받지 못했습니다. API 상태를 확인하세요.")
 
     cg_data = fetch_coingecko_latest()
+    fng_data = fetch_fear_greed_index()
     time.sleep(1)  # 무료 API 매너 호출 (rate limit 보호)
 
-    n = upsert_rows(cm_rows, cg_data, db_path)
+    n = upsert_rows(cm_rows, cg_data, fng_data, db_path)
     print(f"  -> {n}개 행 upsert 완료 (db: {db_path})")
     print(f"  -> 최신 날짜: {cm_rows[0]['time'][:10]}, "
           f"PriceUSD={cm_rows[0].get('PriceUSD')}, "
