@@ -473,6 +473,39 @@ def main():
         "⚠️ 본 도구는 투자 자문이 아닙니다. 모든 지표는 과거 데이터 기반 참고 지표이며, "
         "비트코인 가격은 온체인 펀더멘털 외에도 매크로/심리/규제 등 다양한 요인에 더 크게 좌우될 수 있습니다."
     )
+    # ===== 심리 지표 =====
+    st.divider()
+    st.header("😱 시장 심리 지표")
+    fng = df.iloc[-1]["fear_greed_index"]
+    if fng and not pd.isna(fng):
+        c1, c2, c3, c4 = st.columns(4)
+        label = (
+            "극도의 공포" if fng < 25 else
+            "공포" if fng < 45 else
+            "중립" if fng < 55 else
+            "탐욕" if fng < 75 else
+            "극도의 탐욕"
+        )
+        with c1: st.metric("공포-탐욕지수", f"{int(fng)}/100")
+        with c2: st.metric("심리상태", label)
+        with c3: st.metric("데이터소스", "Alternative.me")
+        with c4: st.metric("업데이트", "일 1회")
+        col_l, col_r = st.columns(2)
+        with col_l:
+            st.markdown(f"""
+**공포-탐욕지수: {int(fng)}/100**
+- 0~25: 극도의 공포
+- 25~45: 공포
+- 45~55: 중립
+- 55~75: 탐욕
+- 75~100: 극도의 탐욕
+            """)
+        with col_r:
+            df_fng = df[df["fear_greed_index"].notna()].tail(30)
+            if not df_fng.empty:
+                st.line_chart(df_fng.set_index("date")[["fear_greed_index"]], height=300)
+    else:
+        st.warning("⚠️ 공포-탐욕지수 데이터 수집 중입니다.")
 
 
 if __name__ == "__main__":
