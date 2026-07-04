@@ -55,9 +55,14 @@ def _load_history(db_path: str = DB_PATH) -> pd.DataFrame:
 
 
 def _percentile_rank(series: pd.Series, value: float) -> Optional[float]:
-    """series 내에서 value가 차지하는 백분위(0~100)를 반환."""
+    """series 내에서 value가 차지하는 백분위(0~100)를 반환.
+
+    value가 NaN이면 (pandas 비교 연산이 NaN에 대해 항상 False를 반환하는 탓에)
+    실제로는 '데이터 없음'인데도 0.0(최저 백분위)으로 잘못 계산되므로 반드시
+    None으로 처리해야 한다.
+    """
     clean = series.dropna()
-    if len(clean) < 5 or value is None:
+    if len(clean) < 5 or value is None or pd.isna(value):
         return None
     rank = (clean < value).sum() / len(clean) * 100
     return round(rank, 1)
@@ -92,7 +97,7 @@ def calculate_all(db_path: str = DB_PATH) -> ValuationResult:
     # MVRV 자체 정규화 Z (정식 공식이 아닌 근사치, 위 모듈 docstring 참고)
     mvrv_clean = df["mvrv_cm"].dropna()
     mvrv_z = None
-    if len(mvrv_clean) >= 5:
+    if len(mvrv_clean) >= 5 and pd.notna(latest["mvrv_cm"]):
         mean = statistics.fmean(mvrv_clean.tolist())
         std = statistics.pstdev(mvrv_clean.tolist())
         if std > 0:

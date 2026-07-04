@@ -8,6 +8,7 @@ SQLite DB(btc_onchain.db)를 읽어 시각화하는 Streamlit 대시보드.
           서버비 $0으로 외부에서 접속 가능한 URL이 생성됨.
 """
 
+import math
 import sqlite3
 from datetime import datetime, timedelta, timezone
 from typing import Optional
@@ -117,8 +118,24 @@ def _render_card(icon: str, title: str, value_display: str, level_label: str,
     """
 
 
+def _is_missing(v: Optional[float]) -> bool:
+    """None과 NaN을 모두 '데이터 없음'으로 취급한다.
+
+    CoinMetrics 데이터는 최신 날짜일수록 일부 지표가 며칠 늦게 확정되어
+    NaN으로 들어올 수 있는데, 단순 `is None`/falsy 체크로는 NaN이나
+    실제 유효한 0.0 값을 구분하지 못해 화면에 'nan' 또는 잘못된 'N/A'가
+    표시되는 문제가 있었다. 반드시 이 헬퍼로 통일해서 체크한다.
+    """
+    if v is None:
+        return True
+    try:
+        return math.isnan(v)
+    except TypeError:
+        return False
+
+
 def _format_pct(p: Optional[float]) -> str:
-    if p is None:
+    if _is_missing(p):
         return "N/A"
     sign = "+" if p >= 0 else ""
     return f"{sign}{p:.1f}%"
@@ -137,7 +154,7 @@ def _calc_trend_pct(series: pd.Series) -> Optional[float]:
 # 값이 바뀌면 해석 문구도 자동으로 함께 바뀐다 (하드코딩된 스냅샷이 아님).
 # ---------------------------------------------------------------------------
 def _mvrv_level(v):
-    if v is None:
+    if _is_missing(v):
         return ("데이터 없음", "gray", "아직 계산할 데이터가 충분하지 않습니다.")
     if v < 1.0:
         return ("저평가 구간", "blue",
@@ -157,7 +174,7 @@ def _mvrv_level(v):
 
 
 def _mvrv_z_level(z):
-    if z is None:
+    if _is_missing(z):
         return ("데이터 없음", "gray", "아직 계산할 데이터가 충분하지 않습니다.")
     if z < -1.0:
         return ("평균보다 뚜렷이 낮음", "blue",
@@ -174,7 +191,7 @@ def _mvrv_z_level(z):
 
 
 def _score_level(score):
-    if score is None:
+    if _is_missing(score):
         return ("데이터 없음", "gray", "아직 계산할 데이터가 충분하지 않습니다.")
     if score >= 85:
         return ("과열", "red",
@@ -195,7 +212,7 @@ def _score_level(score):
 
 
 def _price_trend(pct: Optional[float]):
-    if pct is None:
+    if _is_missing(pct):
         return ("데이터 없음", "gray", "추세를 계산하기엔 데이터가 부족합니다.")
     if pct > 2:
         return ("상승", "green", f"표시된 기간 동안 가격이 {_format_pct(pct)} 상승했습니다.")
@@ -205,7 +222,7 @@ def _price_trend(pct: Optional[float]):
 
 
 def _active_addr_trend(pct: Optional[float]):
-    if pct is None:
+    if _is_missing(pct):
         return ("데이터 없음", "gray", "추세를 계산하기엔 데이터가 부족합니다.")
     if pct > 5:
         return ("활동 증가", "green",
@@ -220,7 +237,7 @@ def _active_addr_trend(pct: Optional[float]):
 
 
 def _hash_rate_trend(pct: Optional[float]):
-    if pct is None:
+    if _is_missing(pct):
         return ("데이터 없음", "gray", "추세를 계산하기엔 데이터가 부족합니다.")
     if pct > 5:
         return ("채굴 참여 증가", "green",
@@ -275,7 +292,7 @@ def render_top_metric_explainers(result, last_data_date=None, last_collected_at=
     with c1:
         st.markdown(
             _render_card(
-                "📐", "MVRV", f"{result.mvrv}" if result.mvrv is not None else "N/A",
+                "📐", "MVRV", f"{result.mvrv}" if not _is_missing(result.mvrv) else "N/A",
                 mvrv_label, mvrv_color,
                 "시가총액을 '실현가치(보유자들이 실제 코인을 매수한 평균 가격 기준 총액)'로 "
                 "나눈 값입니다. CoinMetrics가 직접 계산해서 무료로 제공하는 값을 그대로 사용합니다. "
@@ -288,7 +305,7 @@ def render_top_metric_explainers(result, last_data_date=None, last_collected_at=
         st.markdown(
             _render_card(
                 "📏", "MVRV Z (자체 정규화)",
-                f"{result.mvrv_z}" if result.mvrv_z is not None else "N/A",
+                f"{result.mvrv_z}" if not _is_missing(result.mvrv_z) else "N/A",
                 z_label, z_color,
                 "MVRV가 '지금까지 쌓인 데이터 평균'에서 얼마나(표준편차 기준) 벗어나 있는지를 "
                 "나타내는 자체 계산 지표입니다. ⚠️ 정식 'MVRV Z-Score' 공식(실현가치 기반)이 아니라, "
@@ -301,7 +318,7 @@ def render_top_metric_explainers(result, last_data_date=None, last_collected_at=
         st.markdown(
             _render_card(
                 "🧮", "종합 밸류에이션 스코어",
-                f"{result.score_0_100}/100" if result.score_0_100 is not None else "N/A",
+                f"{result.score_0_100}/100" if not _is_missing(result.score_0_100) else "N/A",
                 score_label, score_color,
                 "MVRV, Puell Multiple, NVT(근사치) 세 지표를 각각 '누적 히스토리 내 백분위'로 "
                 "환산한 뒤 평균한 값입니다. 100에 가까울수록 역사적으로 과열, 0에 가까울수록 "
@@ -358,11 +375,14 @@ def main():
         col1.metric("현재가 (실시간, USD)", f"${live_price:,.0f}")
         col1.caption(f"⏱ {now_kst_str} KST 기준 · CoinGecko")
     else:
-        col1.metric("현재가 (USD)", f"${result.price_usd:,.0f}" if result.price_usd else "N/A")
+        col1.metric("현재가 (USD)", f"${result.price_usd:,.0f}" if not _is_missing(result.price_usd) else "N/A")
         col1.caption("⚠️ 실시간 조회 실패 — 최근 수집된 값으로 표시")
-    col2.metric("MVRV (CoinMetrics 제공)", result.mvrv if result.mvrv is not None else "N/A")
-    col3.metric("MVRV Z(자체 정규화)", result.mvrv_z if result.mvrv_z is not None else "N/A")
-    col4.metric("종합 밸류에이션 스코어", f"{result.score_0_100}/100" if result.score_0_100 else "N/A")
+    col2.metric("MVRV (CoinMetrics 제공)", result.mvrv if not _is_missing(result.mvrv) else "N/A")
+    col3.metric("MVRV Z(자체 정규화)", result.mvrv_z if not _is_missing(result.mvrv_z) else "N/A")
+    col4.metric(
+        "종합 밸류에이션 스코어",
+        f"{result.score_0_100}/100" if not _is_missing(result.score_0_100) else "N/A",
+    )
 
     st.subheader(f"판단: {result.band}")
     if df.shape[0] < 30:
@@ -477,7 +497,7 @@ def main():
     st.divider()
     st.header("😱 시장 심리 지표")
     fng = df.iloc[-1]["fear_greed_index"]
-    if fng and not pd.isna(fng):
+    if not _is_missing(fng):
         c1, c2, c3, c4 = st.columns(4)
         label = (
             "극도의 공포" if fng < 25 else

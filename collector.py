@@ -199,7 +199,7 @@ def upsert_rows(rows: list[dict], cg: dict, fng: dict, db_path: str) -> int:
                 f("HashRate"),
                 f("TxCnt"),
                 f("SplyCur"),
-                f("IssToUSD"),
+                f("IssTotUSD"),
                 cg_vals.get("cg_price_usd"),
                 cg_vals.get("cg_market_cap"),
                 cg_vals.get("cg_volume_24h"),
@@ -221,7 +221,7 @@ def run(db_path: str = DB_PATH) -> None:
     print(f"[{datetime.now(timezone.utc).isoformat()}] 데이터 수집 시작")
     init_db(db_path)
 
-    cm_rows = fetch_coinmetrics_latest(days=5)
+    cm_rows = fetch_coinmetrics_latest(days=14)
     if not cm_rows:
         raise RuntimeError("CoinMetrics에서 데이터를 받지 못했습니다. API 상태를 확인하세요.")
 
@@ -230,11 +230,12 @@ def run(db_path: str = DB_PATH) -> None:
     time.sleep(1)  # 무료 API 매너 호출 (rate limit 보호)
 
     n = upsert_rows(cm_rows, cg_data, fng_data, db_path)
+    latest_row = max(cm_rows, key=lambda r: r["time"])
     print(f"  -> {n}개 행 upsert 완료 (db: {db_path})")
-    print(f"  -> 최신 날짜: {cm_rows[0]['time'][:10]}, "
-          f"PriceUSD={cm_rows[0].get('PriceUSD')}, "
-          f"CapMrktCurUSD={cm_rows[0].get('CapMrktCurUSD')}, "
-          f"CapMVRVCur={cm_rows[0].get('CapMVRVCur')}")
+    print(f"  -> 최신 날짜: {latest_row['time'][:10]}, "
+          f"PriceUSD={latest_row.get('PriceUSD')}, "
+          f"CapMrktCurUSD={latest_row.get('CapMrktCurUSD')}, "
+          f"CapMVRVCur={latest_row.get('CapMVRVCur')}")
 
 
 if __name__ == "__main__":
