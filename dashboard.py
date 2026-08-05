@@ -17,7 +17,7 @@ import pandas as pd
 import streamlit as st
 
 from collector import DB_PATH, fetch_coingecko_latest
-from calculate_metrics import calculate_all, save_result
+from calculate_metrics import calculate_all, calculate_history, save_history
 
 KST = timezone(timedelta(hours=9))
 
@@ -134,6 +134,18 @@ def _is_missing(v: Optional[float]) -> bool:
         return False
 
 
+def _format_date(d) -> str:
+    """'2026-08-02' 문자열 / Timestamp 어느 쪽이 와도 '2026년 08월 02일'로 표기."""
+    if d is None:
+        return "알 수 없음"
+    if hasattr(d, "strftime"):
+        return d.strftime("%Y년 %m월 %d일")
+    try:
+        return datetime.strptime(str(d)[:10], "%Y-%m-%d").strftime("%Y년 %m월 %d일")
+    except ValueError:
+        return str(d)
+
+
 def _format_pct(p: Optional[float]) -> str:
     if _is_missing(p):
         return "N/A"
@@ -192,7 +204,10 @@ def _mvrv_z_level(z):
 
 def _score_level(score):
     if _is_missing(score):
-        return ("데이터 없음", "gray", "아직 계산할 데이터가 충분하지 않습니다.")
+        return ("데이터 없음", "gray",
+                "종합 스코어는 MVRV·Puell·NVT 중 최소 2개가 계산돼야 산출됩니다. "
+                "현재는 확정된 구성지표가 부족해 표시하지 않습니다. "
+                "(1개만으로 평균을 내면 '종합' 스코어가 특정 지표 하나에 좌우돼 왜곡됩니다.)")
     if score >= 85:
         return ("과열", "red",
                 "MVRV·Puell·NVT 세 지표를 종합했을 때, 누적 히스토리 상위 15% 안에 드는 "
@@ -259,7 +274,16 @@ def render_top_metric_explainers(result, last_data_date=None, last_collected_at=
     z_label, z_color, z_text = _mvrv_z_level(result.mvrv_z)
     score_label, score_color, score_text = _score_level(result.score_0_100)
 
-    data_date_str = last_data_date.strftime("%Y년 %m월 %d일") if last_data_date is not None else "알 수 없음"
+    # 기준일은 '수집된 마지막 날짜'가 아니라 '지표가 확정된 마지막 날짜'(result.date)다.
+    # CoinMetrics가 최근 1~2일을 미완성으로 내려주기 때문에 둘이 다를 수 있다.
+    data_date_str = _format_date(result.date)
+    pending_note = ""
+    if result.is_pending:
+        pending_note = (
+            f" 참고로 {_format_date(result.latest_date)} 데이터도 수집되어 있지만, "
+            "CoinMetrics가 아직 MVRV·시가총액을 확정하지 않아(보통 1일 지연) "
+            "밸류에이션 계산에서는 제외했습니다. 다음 수집 때 자동으로 채워집니다."
+        )
 
     collected_str = "알 수 없음"
     if last_collected_at:
@@ -284,7 +308,7 @@ def render_top_metric_explainers(result, last_data_date=None, last_collected_at=
                 "다루는 기준일이며, 통상 전날까지의 마감 데이터입니다.",
                 f"이 온체인 데이터는 {collected_str}에 자동 수집이 완료되어 반영된 값입니다. "
                 "GitHub Actions는 매일 UTC 00:00(한국시간 오전 9시)에 실행되도록 예약되어 있으나, "
-                "실행 대기열 상황에 따라 실제 완료 시각은 다소 늦어질 수 있습니다.",
+                f"실행 대기열 상황에 따라 실제 완료 시각은 다소 늦어질 수 있습니다.{pending_note}",
                 value_caption="온체인 데이터 기준일",
             ),
             unsafe_allow_html=True,
@@ -322,7 +346,8 @@ def render_top_metric_explainers(result, last_data_date=None, last_collected_at=
                 score_label, score_color,
                 "MVRV, Puell Multiple, NVT(근사치) 세 지표를 각각 '누적 히스토리 내 백분위'로 "
                 "환산한 뒤 평균한 값입니다. 100에 가까울수록 역사적으로 과열, 0에 가까울수록 "
-                "역사적으로 저평가된 구간이라는 뜻입니다.",
+                "역사적으로 저평가된 구간이라는 뜻입니다. 세 지표 중 최소 2개가 확정된 날에만 "
+                f"산출하며, 오늘 기준일에는 {result.components}개가 반영됐습니다.",
                 score_text,
             ),
             unsafe_allow_html=True,
@@ -359,9 +384,11 @@ def main():
         return
 
     # 최신 종합 스코어 계산 (캐시 없이 매번 최신 계산)
+    # 당일 1행만이 아니라 전체 히스토리를 다시 계산해 저장한다. CoinMetrics가
+    # 뒤늦게 채워준 값이 과거 derived_metrics 행에도 반영되도록 하기 위함.
     try:
         result = calculate_all()
-        save_result(result)
+        save_history(calculate_history())
     except Exception as e:
         st.error(f"지표 계산 중 오류: {e}")
         return
@@ -377,11 +404,19 @@ def main():
     else:
         col1.metric("현재가 (USD)", f"${result.price_usd:,.0f}" if not _is_missing(result.price_usd) else "N/A")
         col1.caption("⚠️ 실시간 조회 실패 — 최근 수집된 값으로 표시")
+    onchain_caption = f"🔗 온체인 기준일: {result.date}"
     col2.metric("MVRV (CoinMetrics 제공)", result.mvrv if not _is_missing(result.mvrv) else "N/A")
+    col2.caption(onchain_caption)
     col3.metric("MVRV Z(자체 정규화)", result.mvrv_z if not _is_missing(result.mvrv_z) else "N/A")
+    col3.caption(onchain_caption)
     col4.metric(
         "종합 밸류에이션 스코어",
         f"{result.score_0_100}/100" if not _is_missing(result.score_0_100) else "N/A",
+    )
+    col4.caption(
+        f"{onchain_caption} · 구성지표 {result.components}/3"
+        if not _is_missing(result.score_0_100)
+        else f"{onchain_caption} · 구성지표 부족({result.components}/3)"
     )
 
     st.subheader(f"판단: {result.band}")

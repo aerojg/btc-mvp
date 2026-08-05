@@ -175,15 +175,19 @@ def upsert_rows(rows: list[dict], cg: dict, fng: dict, db_path: str) -> int:
                 cg_price_usd, cg_market_cap, cg_volume_24h,
                 collected_at, fear_greed_index
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            -- 온체인 컬럼도 COALESCE로 덮어쓴다.
+            -- CoinMetrics는 최근 날짜를 일부 지표 null인 미완성 상태로 먼저 내려주는데,
+            -- 그대로 대입하면 앞선 실행에서 이미 확정된 값을 null로 지워버릴 수 있다.
+            -- (값 -> 다른 값 정정은 그대로 반영되고, 값 -> null 만 무시된다)
             ON CONFLICT(date) DO UPDATE SET
-                price_usd = excluded.price_usd,
-                cap_mrkt_usd = excluded.cap_mrkt_usd,
-                mvrv_cm = excluded.mvrv_cm,
-                active_addr = excluded.active_addr,
-                hash_rate = excluded.hash_rate,
-                tx_count = excluded.tx_count,
-                supply_current = excluded.supply_current,
-                issuance_usd = excluded.issuance_usd,
+                price_usd = COALESCE(excluded.price_usd, price_usd),
+                cap_mrkt_usd = COALESCE(excluded.cap_mrkt_usd, cap_mrkt_usd),
+                mvrv_cm = COALESCE(excluded.mvrv_cm, mvrv_cm),
+                active_addr = COALESCE(excluded.active_addr, active_addr),
+                hash_rate = COALESCE(excluded.hash_rate, hash_rate),
+                tx_count = COALESCE(excluded.tx_count, tx_count),
+                supply_current = COALESCE(excluded.supply_current, supply_current),
+                issuance_usd = COALESCE(excluded.issuance_usd, issuance_usd),
                 cg_price_usd = COALESCE(excluded.cg_price_usd, cg_price_usd),
                 cg_market_cap = COALESCE(excluded.cg_market_cap, cg_market_cap),
                 cg_volume_24h = COALESCE(excluded.cg_volume_24h, cg_volume_24h),
