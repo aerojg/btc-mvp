@@ -149,6 +149,18 @@ def _is_missing(v: Optional[float]) -> bool:
         return False
 
 
+def _rfield(result, name, default=None):
+    """ValuationResult의 필드를 안전하게 읽는다.
+
+    Streamlit이 dashboard.py만 다시 읽고 calculate_metrics 모듈은 sys.modules에
+    옛 버전으로 남겨두는 경우가 있다(짧은 간격으로 연속 푸시했을 때 관측됨).
+    그러면 새로 추가한 필드가 없는 객체가 넘어와 AttributeError로 페이지 전체가
+    죽어버리므로, 여기서 기본값으로 흘려보낸다. 근본 해결은 앱 재시작이며
+    main()에서 이 상황을 감지해 안내 배너를 띄운다.
+    """
+    return getattr(result, name, default)
+
+
 def _format_date(d) -> str:
     """'2026-08-02' 문자열 / Timestamp 어느 쪽이 와도 '2026년 08월 02일'로 표기."""
     if d is None:
@@ -293,9 +305,9 @@ def render_top_metric_explainers(result, last_data_date=None, last_collected_at=
     # CoinMetrics가 최근 1~2일을 미완성으로 내려주기 때문에 둘이 다를 수 있다.
     data_date_str = _format_date(result.date)
     pending_note = ""
-    if result.is_pending:
+    if _rfield(result, "is_pending", False):
         pending_note = (
-            f" 참고로 {_format_date(result.latest_date)} 데이터도 수집되어 있지만, "
+            f" 참고로 {_format_date(_rfield(result, 'latest_date'))} 데이터도 수집되어 있지만, "
             "CoinMetrics가 아직 MVRV·시가총액을 확정하지 않아(보통 1일 지연) "
             "밸류에이션 계산에서는 제외했습니다. 다음 수집 때 자동으로 채워집니다."
         )
@@ -362,7 +374,7 @@ def render_top_metric_explainers(result, last_data_date=None, last_collected_at=
                 "MVRV, Puell Multiple, NVT(근사치) 세 지표를 각각 '누적 히스토리 내 백분위'로 "
                 "환산한 뒤 평균한 값입니다. 100에 가까울수록 역사적으로 과열, 0에 가까울수록 "
                 "역사적으로 저평가된 구간이라는 뜻입니다. 세 지표 중 최소 2개가 확정된 날에만 "
-                f"산출하며, 오늘 기준일에는 {result.components}개가 반영됐습니다.",
+                f"산출하며, 오늘 기준일에는 {_rfield(result, 'components', '?')}개가 반영됐습니다.",
                 score_text,
             ),
             unsafe_allow_html=True,
@@ -410,6 +422,17 @@ def main():
         st.error(f"지표 계산 중 오류: {e}")
         return
 
+    # 옛 버전 calculate_metrics 모듈을 물고 있는지 감지한다.
+    # 이 경우 화면에 뜨는 값 자체가 옛 로직(미확정 행을 기준일로 잡는 등)이라
+    # 조용히 틀린 숫자를 보여주게 되므로, 숨기지 말고 재시작을 안내한다.
+    if not hasattr(result, "components"):
+        st.error(
+            "⚠️ 앱이 이전 버전의 `calculate_metrics` 모듈을 잡고 있습니다. "
+            "아래 표시되는 온체인 지표는 옛 계산 로직의 결과일 수 있습니다.\n\n"
+            "→ Streamlit Cloud 우측 하단 **Manage app → Reboot app** 으로 재시작해 주세요. "
+            "(로컬이라면 `streamlit run dashboard.py`를 껐다 켜면 됩니다.)"
+        )
+
     live = load_live_price()
     live_price = live.get("cg_price_usd")
     now_kst_str = datetime.now(KST).strftime("%Y-%m-%d %H:%M:%S")
@@ -430,10 +453,11 @@ def main():
         "종합 밸류에이션 스코어",
         f"{result.score_0_100}/100" if not _is_missing(result.score_0_100) else "N/A",
     )
+    comps = _rfield(result, "components", "?")
     col4.caption(
-        f"{onchain_caption} · 구성지표 {result.components}/3"
+        f"{onchain_caption} · 구성지표 {comps}/3"
         if not _is_missing(result.score_0_100)
-        else f"{onchain_caption} · 구성지표 부족({result.components}/3)"
+        else f"{onchain_caption} · 구성지표 부족({comps}/3)"
     )
 
     st.subheader(f"판단: {result.band}")
