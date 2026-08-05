@@ -33,8 +33,12 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$OutputEncoding = [System.Text.Encoding]::UTF8
 $env:PYTHONIOENCODING = 'utf-8'
+
+# 작업 스케줄러에서 띄우면 콘솔 코드페이지가 949(CP949)라, python/git이 뱉은 UTF-8
+# 출력을 PowerShell이 CP949로 디코딩해 로그가 깨진다. 양쪽 모두 UTF-8로 맞춘다.
+$OutputEncoding = [System.Text.Encoding]::UTF8
+try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch { }
 
 $Root      = $PSScriptRoot
 $Python    = Join-Path $Root 'venv\Scripts\python.exe'
