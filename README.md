@@ -68,6 +68,42 @@ streamlit run dashboard.py
 
 ---
 
+## 4-1. 내 PC에서도 매일 자동 실행 (Windows 작업 스케줄러)
+
+GitHub Actions가 멈추거나(리포지토리 60일 무활동 시 스케줄 워크플로가 비활성화됨)
+지연될 때를 대비한 로컬 백업 파이프라인입니다. 등록은 한 번만 하면 됩니다.
+
+```powershell
+powershell -ExecutionPolicy Bypass -File C:\btc_mvp\setup_scheduled_task.ps1
+```
+
+- **매일 06:00**에 실행됩니다.
+- **PC가 06:00에 꺼져 있었다면**, 켜서 로그온한 뒤 3분 후에 실행됩니다.
+  (작업 스케줄러의 `StartWhenAvailable` + 로그온 트리거 이중 안전장치)
+- 같은 날 이미 성공했다면 중복 실행하지 않습니다 (`logs\.last_success` 날짜 스탬프).
+- 하는 일: `git pull` → `collector.py` → `calculate_metrics.py` → DB 변경 시 `commit & push`
+  → Streamlit Cloud 자동 재배포.
+- 로그: `logs\daily_YYYY-MM.log` (git에는 올라가지 않음)
+
+| 명령 | 용도 |
+|---|---|
+| `powershell -ExecutionPolicy Bypass -File .\run_daily.ps1 -Force` | 지금 즉시 1회 실행 |
+| `powershell -ExecutionPolicy Bypass -File .\run_daily.ps1 -Force -NoPush` | 푸시 없이 수집만 테스트 |
+| `Start-ScheduledTask -TaskName 'BTC-MVP Daily Collect'` | 스케줄러를 통해 실행 |
+| `Get-ScheduledTaskInfo -TaskName 'BTC-MVP Daily Collect'` | 마지막 실행 결과/다음 실행 시각 |
+| `.\setup_scheduled_task.ps1 -At 07:30` | 실행 시각 변경 |
+| `.\setup_scheduled_task.ps1 -Unregister` | 등록 해제 |
+
+> **실행 시각에 대한 참고**: 06:00 KST = 전날 21:00 UTC입니다. CoinMetrics는 UTC 일 단위로
+> 데이터를 확정하므로, 06시 로컬 실행이 09시 KST에 도는 GitHub Actions보다 데이터가
+> 더 신선하지는 않습니다. 이 작업의 목적은 신선도가 아니라 **이중화(백업)와 로컬 DB 최신 유지**입니다.
+
+> **자격증명**: `git push`가 Windows 자격 증명 관리자에 저장된 GitHub 토큰을 사용하므로,
+> 작업은 반드시 *로그온한 사용자 계정*으로 실행되도록 등록됩니다. SYSTEM 계정으로 바꾸면
+> 자격증명에 접근하지 못해 push가 실패합니다.
+
+---
+
 ## 5. 초기 시드 데이터 (콜드스타트 보완, 선택사항)
 
 MVRV Z-Score나 백분위 점수는 누적 데이터가 많을수록 신뢰도가 올라갑니다.

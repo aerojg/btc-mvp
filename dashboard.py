@@ -9,6 +9,7 @@ SQLite DB(btc_onchain.db)를 읽어 시각화하는 Streamlit 대시보드.
 """
 
 import math
+import os
 import sqlite3
 from datetime import datetime, timedelta, timezone
 from typing import Optional
@@ -17,7 +18,7 @@ import pandas as pd
 import streamlit as st
 
 from collector import DB_PATH, fetch_coingecko_latest
-from calculate_metrics import calculate_all, calculate_history, save_history
+from calculate_metrics import calculate_all
 
 KST = timezone(timedelta(hours=9))
 
@@ -84,13 +85,27 @@ st.markdown(
 
 
 @st.cache_data(ttl=3600)
-def load_data(db_path: str = DB_PATH) -> pd.DataFrame:
+def _load_data_cached(db_path: str, db_mtime: float) -> pd.DataFrame:
     conn = sqlite3.connect(db_path)
     df = pd.read_sql_query(
         "SELECT * FROM daily_metrics ORDER BY date ASC", conn, parse_dates=["date"]
     )
     conn.close()
     return df
+
+
+def load_data(db_path: str = DB_PATH) -> pd.DataFrame:
+    """DB 파일의 수정시각을 캐시 키에 포함시켜 읽는다.
+
+    작업 스케줄러(run_daily.ps1)나 GitHub Actions가 btc_onchain.db를 갱신하면
+    mtime이 바뀌므로 캐시가 즉시 무효화된다. 단순 ttl=3600만 걸어두면 새로
+    수집된 데이터가 최대 1시간 동안 화면에 반영되지 않는 문제가 있었다.
+    """
+    try:
+        mtime = os.path.getmtime(db_path)
+    except OSError:
+        mtime = 0.0
+    return _load_data_cached(db_path, mtime)
 
 
 @st.cache_data(ttl=30)
@@ -383,12 +398,14 @@ def main():
         st.warning("아직 수집된 데이터가 없습니다. `python collector.py`를 먼저 실행하세요.")
         return
 
-    # 최신 종합 스코어 계산 (캐시 없이 매번 최신 계산)
-    # 당일 1행만이 아니라 전체 히스토리를 다시 계산해 저장한다. CoinMetrics가
-    # 뒤늦게 채워준 값이 과거 derived_metrics 행에도 반영되도록 하기 위함.
+    # 최신 종합 스코어 계산 (캐시 없이 페이지를 열 때마다 최신 계산)
+    # derived_metrics 테이블에 쓰지는 않는다. 그 테이블의 주인은 calculate_metrics.py이며
+    # GitHub Actions와 run_daily.ps1이 매일 전체 히스토리를 재계산해 채운다.
+    # 대시보드가 페이지 로드마다 DB에 쓰면 btc_onchain.db가 상시 modified 상태가 되어
+    # git pull이 막히고(자동화 파이프라인과 충돌), Streamlit Cloud에서는 어차피
+    # 컨테이너와 함께 사라지는 무의미한 쓰기가 된다.
     try:
         result = calculate_all()
-        save_history(calculate_history())
     except Exception as e:
         st.error(f"지표 계산 중 오류: {e}")
         return
